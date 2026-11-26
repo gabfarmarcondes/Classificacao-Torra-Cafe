@@ -1,7 +1,8 @@
-# Classificação de torra de café: pipeline do artigo
+# Classificação de Torra de Café
 
-Pipeline para o artigo do Computer on the Beach com o *Coffee Bean Dataset Resized (224×224)*.
-A pergunta de pesquisa é: o desempenho quase perfeito resiste a variações de iluminação, e o que o modelo realmente aprende?
+Repositório para o artigo do Computer on the Beach com o *Coffee Bean Dataset Resized (224×224)*.
+
+Pergunta de pesquisa: O que um classificador de nível de torra aprende a partir de imagens de grãos de café: as características do grão ou pistas externas a ele, como o fundo da foto, o formato e a origem do café?
 
 ## Estado
 
@@ -23,14 +24,16 @@ O código e o dataset ficam na mesma pasta:
 ```
 coffe-bean-dataset/
 ├── src/              código do pipeline (audit, preprocess, shortcuts, ...)
-├── train/            Green/ Light/ Medium/ Dark/  (300 imagens cada)
-├── test/             Green/ Light/ Medium/ Dark/  (100 imagens cada)
-├── outputs/          criado pelo pipeline
-├── Coffee Bean.csv   CSV original do Kaggle (caminhos relativos a esta pasta)
-├── colab_0_2.ipynb
-├── run_0_2.sh
+├── train/            Green/ Light/ Medium/ Dark/  (300 imagens cada)  * não versionado
+├── test/             Green/ Light/ Medium/ Dark/  (100 imagens cada)  * não versionado
+├── Coffee Bean.csv   CSV original do Kaggle                           * não versionado
+├── outputs/          criado pelo pipeline                             * não versionado
 └── requirements.txt
 ```
+
+### Dataset
+
+O dataset não está no repositório. Baixe o [Coffee Bean Dataset Resized (224×224)](https://www.kaggle.com/datasets/gpiosenka/coffee-bean-dataset-resized-224-x-224) e coloque as pastas `train/` e `test/` na raiz do projeto, ao lado de `src/`.
 
 ## Instalação
 
@@ -51,17 +54,6 @@ python -m src.preprocess
 python -m src.shortcuts
 ```
 
-Ou tudo de uma vez: `bash run_0_2.sh`. Para usar outra pasta de dados ou de saída: `bash run_0_2.sh <DATA> <OUT>`.
-
-No Colab, abra `colab_0_2.ipynb`. Antes, compacte a pasta `coffe-bean-dataset` inteira (sem `venv/` e `outputs/`) e suba como `coffe-bean-dataset.zip` para o `Meu Drive`:
-
-```bash
-cd ~/Documents
-zip -r coffe-bean-dataset.zip coffe-bean-dataset -x 'coffe-bean-dataset/venv/*' 'coffe-bean-dataset/outputs/*'
-```
-
-O notebook copia o zip para o disco local do Colab (mais rápido que ler do Drive) e salva os resultados em `Meu Drive/coffe-bean-dataset/outputs`.
-
 ## O que cada etapa gera
 
 ### 0 · `outputs/audit/`
@@ -72,7 +64,7 @@ O notebook copia o zip para o disco local do Colab (mais rápido que ler do Driv
 - `near_dups.png`: pares quase-duplicados, se houver, para conferir a olho.
 - `closest_pairs.png`: os pares de imagens **distintas** mais parecidos. Mostram a margem entre "cópia" e "outro grão".
 
-**Critério de quase-duplicata:** RMSE pixel a pixel entre as imagens reduzidas para 64×64 RGB (escala 0–255), com limiar 5. O pHash foi testado e descartado: como toda foto é "um grão centralizado num fundo claro", ele dava distância ≤ 2 até para grãos diferentes de classes diferentes (Dark × Medium).
+**Critério de quase-duplicata:** RMSE pixel a pixel entre as imagens reduzidas para 64×64 RGB (escala 0–255), com limiar 10 (no dataset completo, as fotos repetidas deram 3,0 e 6,9, e o par de grãos distintos seguinte, 13,2). O pHash foi testado e descartado: como toda foto é "um grão centralizado num fundo claro", ele dava distância ≤ 2 até para grãos diferentes de classes diferentes (Dark × Medium).
 
 ### 1 · `outputs/preprocess/`
 - `masks.npz`: máscaras booleanas (N, 224, 224), na ordem de `unique.csv`.
@@ -99,11 +91,19 @@ Testes (regressão logística):
 | `cor_grao` | 16 números da cor do grão: a pista legítima, como referência | 25% |
 | `par_forma` | silhueta em Green×Light (mesma origem), Light×Medium e Medium×Dark (origens diferentes) | 50% |
 
-## Resultado preliminar (amostra de 57 imagens únicas, **não usar no artigo**)
+## Resultados até a etapa 2 (dataset completo)
 
-- 25 das 27 imagens de teste da amostra têm cópia exata no treino.
-- Só fundo: ~49% (acaso 25%). Na imagem normalizada continua ~48%: a normalização pelo p90 iguala o "branco", mas não remove todas as diferenças do fundo.
-- Só forma: ~31% em 4 classes, com desvio alto.
-- Cor do grão: 100%.
+**Auditoria:** as 400 imagens do teste oficial são cópias exatas de imagens do treino. Ao todo há 406 cópias exatas; restam 1.194 imagens únicas (Green 299, Light 300, Medium 300, Dark 295). Há também 2 pares da mesma foto com mudança mínima (RMSE 3,0 e 6,9).
 
-Rodar no dataset completo antes de concluir qualquer coisa.
+**Atalhos** (regressão logística, média ± desvio da acurácia nos 15 splits):
+
+| Teste | Acurácia | Acaso |
+|---|---|---|
+| Só fundo (original) | 60,4% ± 3,1 | 25% |
+| Só fundo (normalizado) | 53,9% ± 2,6 | 25% |
+| Só forma | 49,0% ± 2,7 | 25% |
+| Cor do grão (original) | 98,9% ± 0,7 | 25% |
+| Cor do grão (normalizada) | 99,0% ± 0,5 | 25% |
+| Forma: Green × Light (mesma origem) | 70,9% ± 4,7 | 50% |
+| Forma: Light × Medium (origens diferentes) | 69,6% ± 4,0 | 50% |
+| Forma: Medium × Dark (origens diferentes) | 63,6% ± 3,0 | 50% |
