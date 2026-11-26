@@ -11,7 +11,8 @@ Pergunta de pesquisa: O que um classificador de nível de torra aprende a partir
 | 0 · Auditoria de duplicatas + folds | `src/audit.py` | pronto |
 | 1 · Máscara do grão + normalização pelo fundo | `src/preprocess.py` | pronto |
 | 2 · Testes de atalho (fundo, forma, pares) | `src/shortcuts.py` | pronto |
-| 3 · Extração (cor Lab + backbones) | — | próximo |
+| 3 · Extração com backbones (4 versões da imagem) | `src/deep_features.py` | pronto |
+| 3b · Checagem de grão fotografado mais de uma vez | `src/same_bean.py` | pronto |
 | 4–5 · Classificação e fusão | — | a fazer |
 | 6 · Aumento e robustez | — | a fazer |
 | 7 · Métricas e estatística | — | a fazer |
@@ -24,6 +25,7 @@ O código e o dataset ficam na mesma pasta:
 ```
 coffe-bean-dataset/
 ├── src/              código do pipeline (audit, preprocess, shortcuts, ...)
+├── meta/             anotações manuais versionadas (pares do mesmo grão)
 ├── train/            Green/ Light/ Medium/ Dark/  (300 imagens cada)  * não versionado
 ├── test/             Green/ Light/ Medium/ Dark/  (100 imagens cada)  * não versionado
 ├── Coffee Bean.csv   CSV original do Kaggle                           * não versionado
@@ -42,7 +44,13 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-O U²-Net (modelo de segmentação, ~176 MB) é baixado automaticamente na primeira execução da etapa 1.
+O PyTorch é instalado à parte, na versão só para CPU (o pipeline não precisa de GPU):
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+```
+
+Modelos baixados automaticamente na primeira execução: U²-Net (etapa 1), ResNet50 e ConvNeXt-T (torchvision) e DINOv2-S (Hugging Face) na etapa 3.
 
 ## Como rodar
 
@@ -52,7 +60,11 @@ Rode na raiz do projeto. Como `train/` e `test/` estão ao lado de `src/`, `--da
 python -m src.audit
 python -m src.preprocess
 python -m src.shortcuts
+python -m src.deep_features
+python -m src.same_bean
 ```
+
+Depois do `same_bean`, rode de novo `python -m src.audit` e `python -m src.shortcuts`: os pares do mesmo grão passam a ficar no mesmo grupo e os folds mudam.
 
 ## O que cada etapa gera
 
@@ -90,6 +102,48 @@ Testes (regressão logística):
 | `so_forma` | 11 números da silhueta, sem cor | 25% |
 | `cor_grao` | 16 números da cor do grão: a pista legítima, como referência | 25% |
 | `par_forma` | silhueta em Green×Light (mesma origem), Light×Medium e Medium×Dark (origens diferentes) | 50% |
+
+### 3 · `outputs/features/deep_*`
+- `deep_<backbone>_<versão>.npy`: uma matriz por backbone e versão da imagem (1.194 linhas, na ordem de `unique.csv`).
+- `deep_meta.json`: dimensão e pesos de cada matriz.
+- `versoes_exemplo.png`: as 4 versões lado a lado, uma imagem por classe.
+
+Backbones congelados (só inferência, nenhum treino):
+
+| Backbone | Pesos | Dimensão |
+|---|---|---|
+| `resnet50` | ImageNet (torchvision `IMAGENET1K_V2`) | 2048 |
+| `convnext_tiny` | ImageNet (torchvision `IMAGENET1K_V1`) | 768 |
+| `dinov2_small` | autossupervisionado (`facebook/dinov2-small`) | 384 |
+
+Versões da imagem (`src/image_versions.py`):
+
+| Versão | O que é | Para quê |
+|---|---|---|
+| `original` | a foto do dataset | referência |
+| `normalizada` | iluminação corrigida pelo fundo (etapa 1) | testar a normalização |
+| `sem_fundo` | grão original sobre branco puro | elimina a pista do fundo por construção |
+| `so_fundo` | disco de raio fixo em volta do grão apagado e preenchido com o papel | controle: mede o quanto um backbone consegue usar só o fundo |
+
+No `so_fundo`, o disco tem o mesmo tamanho em todas as imagens (cobre o maior grão do dataset, com margem), então nem o tamanho nem o formato do grão ficam visíveis. O preenchimento é uma superfície suave ajustada ao papel, para não criar manchas.
+
+### 3b · `outputs/same_bean/` e `meta/mesmo_grao.csv`
+A auditoria só detecta a mesma foto. O mesmo grão fotografado de novo (girado, deslocado, com outra luz) passa despercebido e pode cair no treino e no teste. A detecção é automática:
+
+1. **Candidatos:** cada imagem `sem_fundo` passa pelo DINOv2 em 8 orientações. Para cada imagem, os 10 vizinhos mais parecidos da mesma classe viram pares candidatos.
+2. **Verificação geométrica:** em cada par, pontos-chave SIFT detectados só dentro do grão são ligados entre as duas imagens, e o RANSAC conta quantas ligações são explicadas por uma mesma transformação (giro + deslocamento + zoom entre 0,6× e 1,6×). Mesmo grão = dezenas de ligações coerentes (rachaduras, manchas, borda); grãos diferentes = poucas, ao acaso.
+3. **Limiar calibrado nos dados:** pares de classes diferentes são, com certeza, grãos diferentes. Os 5 vizinhos mais parecidos de outra classe de cada imagem são verificados do mesmo jeito; o limiar é o maior número de ligações entre eles + 1.
+4. **Critério liberal, de propósito:** no dataset completo, as ligações dos pares da mesma classe formam uma faixa contínua, sem um vão entre "mesmo grão" e "grão diferente", e a inspeção visual não resolve o meio da faixa (alinhar duas fotos pela fenda faz até grãos diferentes parecerem iguais). Agrupar dois grãos diferentes por engano não prejudica nada (só os mantém do mesmo lado nos folds); deixar passar um grão repetido é vazamento. Por isso, tudo acima do que grãos distintos atingem por acaso é tratado como mesmo grão. O `resumo.json` registra quantos pares haveria com limiares mais rígidos.
+5. Pares candidatos com ligações ≥ limiar são marcados como mesmo grão.
+
+Saídas:
+- `meta/mesmo_grao.csv` (versionado): uma linha por par candidato. Colunas: `similaridade` (DINOv2, usada só para escolher os candidatos), `ligacoes` (ligações SIFT coerentes entre as duas fotos) e `mesmo_grao` (`s` quando `ligacoes` ≥ limiar).
+- `confirmados.png`: pares marcados, com as ligações desenhadas.
+- `perto_do_limiar.png`: os rejeitados com mais ligações, para conferir a margem.
+- `ligacoes.png`: distribuição das ligações (candidatos × classes diferentes).
+- `resumo.json`: limiar, contagens e número de pares para limiares mais rígidos (sensibilidade). **Vai para o artigo.**
+
+No dataset completo, os 5.376 pares de classes diferentes verificados deram no máximo 6 ligações.
 
 ## Resultados até a etapa 2 (dataset completo)
 

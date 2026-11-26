@@ -14,6 +14,11 @@ Critério: RMSE pixel a pixel entre as imagens reduzidas para 64x64 RGB (escala 
 O pHash foi descartado: como toda foto é "um grão centralizado num fundo claro", ele
 dava distância <= 2 até para grãos diferentes de classes diferentes.
 
+Mesmo grão fotografado de novo (girado, deslocado, com outra luz): detectado
+automaticamente na etapa 3b (python -m src.same_bean) e gravado em
+meta/mesmo_grao.csv. Os pares marcados com "s" na coluna mesmo_grao entram no
+mesmo grupo dos folds.
+
 Uso (na raiz do projeto): python -m src.audit
      --data padrão = raiz do projeto (onde estão train/ e test/)
      --out  padrão = <raiz>/outputs
@@ -86,6 +91,8 @@ def main():
                          "distinto seguinte, 13,2")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--reps", type=int, default=3)
+    ap.add_argument("--same-bean", default=ROOT / "meta" / "mesmo_grao.csv", type=Path,
+                    help="pares do mesmo grão (gerado por src.same_bean)")
     args = ap.parse_args()
     out = args.out / "audit"
     out.mkdir(parents=True, exist_ok=True)
@@ -117,8 +124,21 @@ def main():
         if df.md5[i] != df.md5[j] and dist[i, j] <= args.pix_thr:
             uf.union(i, j)
             near_pairs.append((round(float(dist[i, j]), 2), int(i), int(j)))
-    df["group"] = [uf.find(i) for i in range(len(df))]
     near_pairs.sort()
+
+    # 3b) mesmo grão em fotos diferentes (detectado por src.same_bean) ---------
+    n_same_bean = 0
+    if args.same_bean.exists():
+        conf = pd.read_csv(args.same_bean, dtype=str).fillna("")
+        conf = conf[conf.mesmo_grao.str.strip().str.lower() == "s"]
+        rows_by_path = df.groupby("path").groups
+        for a_path, b_path in zip(conf.path_a, conf.path_b):
+            if a_path in rows_by_path and b_path in rows_by_path:
+                uf.union(int(rows_by_path[a_path][0]), int(rows_by_path[b_path][0]))
+                n_same_bean += 1
+            else:
+                print(f"[auditoria] aviso: par não encontrado no dataset: {a_path} | {b_path}")
+    df["group"] = [uf.find(i) for i in range(len(df))]
 
     # pares distintos mais parecidos: mostram a margem entre "cópia" e "outro grão"
     distinct = df.md5.to_numpy()[iu] != df.md5.to_numpy()[ju]
@@ -160,6 +180,7 @@ def main():
         "quase_dup_limiar": args.pix_thr,
         "pares_quase_duplicados": len(near_pairs),
         "menor_rmse_entre_imagens_distintas": min_distinct,
+        "pares_mesmo_grao_confirmados": n_same_bean,
         "n_unicas": int(len(uniq)),
         "unicas_por_classe": uniq.label.value_counts().to_dict(),
         "n_grupos": int(uniq.group.nunique()),
@@ -178,6 +199,8 @@ def main():
           f"menor RMSE entre imagens distintas: {min_distinct}")
     if conflicts:
         print(f"[auditoria] ATENÇÃO: {len(conflicts)} imagens idênticas com classes diferentes")
+    if n_same_bean:
+        print(f"[auditoria] pares do mesmo grão confirmados (meta/mesmo_grao.csv): {n_same_bean}")
     print(f"[auditoria] conjunto único: {len(uniq)} imagens, {report['unicas_por_classe']}")
     print(f"[auditoria] {len(folds)} splits salvos em {out / 'folds.json'}")
 
