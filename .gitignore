@@ -221,3 +221,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Anotações
+notes/
+
+# dataset (baixar do Kaggle e colocar na raiz)
+train/
+test/
+Coffee Bean.csv
+
+# gerado pelo pipeline
+outputs/
+
+# ambiente e anotações locais
+venv/
+__pycache__/
+Anotações.txt
+colab_0_2.ipynb
